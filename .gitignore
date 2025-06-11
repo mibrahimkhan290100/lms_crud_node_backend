@@ -2,3 +2,4 @@
 .history/
 .env
 node_modules
+src/utils/configs/generate_jwt_secret.js
