@@ -1,6 +1,7 @@
 const { hashPassword, verifyPassword } = require("../utils/configs/auth");
-const { signToken } = require("../utils/configs/jwt");
+const { signAccessToken, signRefreshToken, verifyRefreshToken } = require("../utils/configs/jwt");
 const db = require("../utils/databases/db");
+const jwt = require("jsonwebtoken")
 const {
   registerSchema,
   loginSchema,
@@ -66,14 +67,27 @@ async function LoginUser(req, res) {
 
     }
 
-    const token = signToken({id: user.id , email : user.email});
+    const payload = {id: user.id , email : user.email};
+
+    const accessToken = signAccessToken(payload);
+    const refreshToken = signRefreshToken(payload);
+    const { exp }     = jwt.decode(refreshToken);
+    const expiresAt   = new Date(exp * 1000);
+
+    await db('refresh_tokens').insert({
+        user_id:user.id,
+        token : refreshToken,
+        expires_at: expiresAt
+    })
+ 
 
     res.status(200).json({
         status: true ,
         message:"Login Successfull",
         data : {
             user,
-            token
+            accessToken,
+            refreshToken,
         }
     })
   } catch (err) {
@@ -84,4 +98,52 @@ async function LoginUser(req, res) {
   }
 }
 
-module.exports = { RegisterUser, LoginUser };
+async function RefreshTokenVerify(req , res) {
+    const {refreshToken} = req.body
+
+    if(!refreshToken){
+        return res.status(401).json({
+            error:"refresh token required"
+        })
+    }
+    try{
+        const stored = await db('refresh_tokens').where({
+            token:refreshToken
+        })
+        .first();
+
+        if(!stored){
+            return res.status(401).json({
+                error:"Invalid Token"
+            })
+        }
+
+        const payload = verifyRefreshToken(refreshToken);
+
+        const newAccessToken = signAccessToken({
+            id :payload.id,
+            email : payload.email
+        })
+
+        return res.status(200).json({
+            status:true,
+            accessToken : newAccessToken
+        })
+
+    }catch(err){
+
+        if(err.name === "TokenExpiresError" || err.name === "JsonWebTokenError"){
+            await db('refresh_tokens').where({token : req.body.refreshToken}).del();
+        }
+        console.log("Refresh Token Error: " , err);
+        return res.status(401).json({
+            error : "Invalid or Expired Token"
+        })
+    }
+}
+
+async function LogoutUser(req , res) {
+
+}
+
+module.exports = { RegisterUser, LoginUser , RefreshTokenVerify };
